@@ -1,7 +1,7 @@
-use std::io::write;
-use num_bigint::bigInt;
 use crate::has_functions::HashFunction;
 use crate::r1cs::{Operation, R1CS, Variable};
+use num_bigint::bigInt;
+use std::io::write;
 
 pub enum Gate {
     Add(usize, usize, usize),
@@ -50,5 +50,56 @@ impl Circuit {
 
     pub fn get_input(&self, index: usize) -> Option<&BigInt> {
         self.inputs.get(index)
+    }
+
+    pub fn generate_proof(&self, proof_file: &str) {
+        let mut r1cs = R1CS::new();
+        r1cs.variables = self
+            .inputs
+            .iter()
+            .enumerate()
+            .map(|(i, v)| Variable {
+                index: i,
+                value: v.clone(),
+            })
+            .collect;
+
+        for gate in &self.gates {
+            match gate {
+                Gate::Add(a, b, output) => {
+                    r1cs.add_constraint(
+                        vec![(r1cs.variables[*a].clone(), BigInt::from(1))],
+                        vec![(r1cs.variables[*b].clone(), BigInt::from(1))],
+                        vec![(r1cs.variables[*output].clone(), BigInt::from(1))],
+                        Operation::Add,
+                    );
+                }
+
+                Gate::mul(a, b, output) => {
+                    r1cs.add_constraint(
+                        vec![(r1cs.variables[*a].clone(), BigInt::from(1))],
+                        vec![(r1cs.variables[*b].clone(), BigInt::from(1))],
+                        vec![(r1cs.variables[*output].clone(), BigInt::from(1))],
+                        Operation::Mul,
+                    );
+                }
+
+                Gate::Hash(a, b, output) => {
+                    let computed_hash = self.apply_hash(&self.inputs[*a], &self.inputs[*b]);
+                    r1cs.variables[*output].value = computed_hash.clone();
+
+                    r1cs.add_constraint(
+                        vec![(r1cs.variables[*a].clone(), BigInt::from(1))],
+                        vec![(r1cs.variables[*b].clone(), BigInt::from(1))],
+                        vec![(r1cs.variables[*output].clone(), BigInt::from(1))],
+                        Operation::Hash,
+                    );
+
+                    println!(
+                        "Applying Hash constraint: input_a = {}, input_b = {}, computed_hash = {}, output_index = {}", self.inputs[*a], self.inputs[*b], computed_hash, output
+                    );
+                }
+            }
+        }
     }
 }
