@@ -96,10 +96,31 @@ impl Circuit {
                     );
 
                     println!(
-                        "Applying Hash constraint: input_a = {}, input_b = {}, computed_hash = {}, output_index = {}", self.inputs[*a], self.inputs[*b], computed_hash, output
+                        "Applying Hash constraint: input_a = {}, input_b = {}, computed_hash = {}, output_index = {}",
+                        self.inputs[*a], self.inputs[*b], computed_hash, output
                     );
                 }
             }
+        }
+
+        let is_valid = r1cs.is_satisfied(|a, b| {
+            if let Some(ref hash_function) = self.hash_function {
+                hash_function.hash(a, b)
+            } else {
+                a + b
+            }
+        });
+
+        let mut file = std::fs::File::create(proof_file).expect("Could not create Proof file");
+        file.write_all(&[is_valid as u8])
+            .expect("Failed to write proof to file");
+        println!("Proof generated and saved to {}", proof_file);
+
+        pub fn verify_proof(&self, proof_file: &str) -> bool {
+            let proof_data = std::fs::read(proof_file).expect("Could not read proof file");
+            let is_valid = proof_data[0] == 1;
+            println!("Proof verification result: {}", is_valid);
+            is_valid
         }
     }
 }

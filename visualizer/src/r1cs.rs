@@ -112,4 +112,10 @@ impl R1CS {
         }
         true
     }
+
+    pub fn save_to_binary(&self, filename: &str) {
+        let mut file = File::create(filename).expect("Could not create file");
+        let data = bincode::serialize(self).expect("Failed to serialize R1CS");
+        file.write_all(&data).expect("Failed to write file");
+    }
 }
