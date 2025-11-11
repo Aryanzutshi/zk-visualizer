@@ -1,7 +1,8 @@
-use crate::has_functions::HashFunction;
+use crate::hash_functions::HashFunction;
 use crate::r1cs::{Operation, R1CS, Variable};
-use num_bigint::bigInt;
-use std::io::write;
+use num_bigint::BigInt;
+use std::fs::File;
+use std::io::{Read, Write};
 
 pub enum Gate {
     Add(usize, usize, usize),
@@ -13,11 +14,11 @@ pub struct Circuit {
     hash_function: Option<Box<dyn HashFunction>>,
     inputs: Vec<BigInt>,
     gates: Vec<Gate>,
-    outputs: Vec<Bigint>,
+    outputs: Vec<BigInt>,
 }
 
 impl Circuit {
-    pub fn new(hash_function: Option<Box<dyn hashFunction>>) -> Self {
+    pub fn new(hash_function: Option<Box<dyn HashFunction>>) -> Self {
         Circuit {
             hash_function,
             inputs: Vec::new(),
@@ -36,15 +37,14 @@ impl Circuit {
         self.gates.push(gate);
     }
 
-    pub fn set_output(&mut self, value: BigInt) {
-        self.input.push(value);
+    pub fn add_output(&mut self, value: BigInt) {
+        self.outputs.push(value);
     }
 
-    pub fn apply_hash(&self, a: &BigInt, b: &BigInt) -> BigInt {
-        if let Some(ref hash_function) = self.hash_function {
-            hash_function.hash(a, b)
-        } else {
-            a + b
+    fn apply_hash(&self, a: &BigInt, b: &BigInt) -> BigInt {
+        match &self.hash_function {
+            Some(h) => h.hash(a, b),
+            None => a + b,  // fallback
         }
     }
 
@@ -52,8 +52,10 @@ impl Circuit {
         self.inputs.get(index)
     }
 
-    pub fn generate_proof(&self, proof_file: &str) {
+    pub fn generate_proof(&self, proof_file: &str) -> std::io::Result<()> {
         let mut r1cs = R1CS::new();
+
+        // Load inputs into R1CS variable list
         r1cs.variables = self
             .inputs
             .iter()
@@ -62,65 +64,74 @@ impl Circuit {
                 index: i,
                 value: v.clone(),
             })
-            .collect;
+            .collect::<Vec<_>>();
 
         for gate in &self.gates {
             match gate {
-                Gate::Add(a, b, output) => {
+                Gate::Add(a, b, out) => {
                     r1cs.add_constraint(
                         vec![(r1cs.variables[*a].clone(), BigInt::from(1))],
                         vec![(r1cs.variables[*b].clone(), BigInt::from(1))],
-                        vec![(r1cs.variables[*output].clone(), BigInt::from(1))],
+                        vec![(Variable::new(*out, BigInt::default()), BigInt::from(1))],
                         Operation::Add,
                     );
                 }
 
-                Gate::mul(a, b, output) => {
+                Gate::Mul(a, b, out) => {
                     r1cs.add_constraint(
                         vec![(r1cs.variables[*a].clone(), BigInt::from(1))],
                         vec![(r1cs.variables[*b].clone(), BigInt::from(1))],
-                        vec![(r1cs.variables[*output].clone(), BigInt::from(1))],
+                        vec![(Variable::new(*out, BigInt::default()), BigInt::from(1))],
                         Operation::Mul,
                     );
                 }
 
-                Gate::Hash(a, b, output) => {
-                    let computed_hash = self.apply_hash(&self.inputs[*a], &self.inputs[*b]);
-                    r1cs.variables[*output].value = computed_hash.clone();
+                Gate::Hash(a, b, out) => {
+                    let h = self.apply_hash(&self.inputs[*a], &self.inputs[*b]);
+
+                    // Ensure output variable exists
+                    if *out >= r1cs.variables.len() {
+                        r1cs.variables.push(Variable::new(*out, h.clone()));
+                    } else {
+                        r1cs.variables[*out].value = h.clone();
+                    }
 
                     r1cs.add_constraint(
                         vec![(r1cs.variables[*a].clone(), BigInt::from(1))],
                         vec![(r1cs.variables[*b].clone(), BigInt::from(1))],
-                        vec![(r1cs.variables[*output].clone(), BigInt::from(1))],
+                        vec![(r1cs.variables[*out].clone(), BigInt::from(1))],
                         Operation::Hash,
                     );
 
                     println!(
-                        "Applying Hash constraint: input_a = {}, input_b = {}, computed_hash = {}, output_index = {}",
-                        self.inputs[*a], self.inputs[*b], computed_hash, output
+                        "Hash gate: a={}, b={}, hash={}, out={}",
+                        self.inputs[*a], self.inputs[*b], h, out
                     );
                 }
             }
         }
 
-        let is_valid = r1cs.is_satisfied(|a, b| {
-            if let Some(ref hash_function) = self.hash_function {
-                hash_function.hash(a, b)
+        let satisfied = r1cs.is_satisfied(|a, b| {
+            if let Some(h) = &self.hash_function {
+                h.hash(a, b)
             } else {
                 a + b
             }
         });
 
-        let mut file = std::fs::File::create(proof_file).expect("Could not create Proof file");
-        file.write_all(&[is_valid as u8])
-            .expect("Failed to write proof to file");
-        println!("Proof generated and saved to {}", proof_file);
+        let mut file = File::create(proof_file)?;
+        file.write_all(&[satisfied as u8])?;
 
-        pub fn verify_proof(&self, proof_file: &str) -> bool {
-            let proof_data = std::fs::read(proof_file).expect("Could not read proof file");
-            let is_valid = proof_data[0] == 1;
-            println!("Proof verification result: {}", is_valid);
-            is_valid
-        }
+        println!("Proof generated → {}", proof_file);
+        Ok(())
+    }
+
+    pub fn verify_proof(&self, proof_file: &str) -> std::io::Result<bool> {
+        let mut file = File::open(proof_file)?;
+        let mut buf = [0u8];
+        file.read_exact(&mut buf)?;
+        let valid = buf[0] == 1;
+        println!("Proof verification: {}", valid);
+        Ok(valid)
     }
 }
