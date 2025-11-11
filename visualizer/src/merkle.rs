@@ -9,6 +9,8 @@ pub struct MerkleTree<H: HashFunction> {
 
 impl<H: HashFunction> MerkleTree<H> {
     pub fn new(leaves: Vec<BigInt>, hash_function: H) -> Self {
+        assert!(!leaves.is_empty(), "Merkle tree cannot be empty");
+
         let root = MerkleTree::compute_root(&leaves, &hash_function);
         MerkleTree {
             root,
@@ -17,54 +19,56 @@ impl<H: HashFunction> MerkleTree<H> {
         }
     }
 
+    /// Returns a Merkle authentication path for `index`.
+    /// Each element: (sibling_hash, sibling_is_left)
     pub fn merkle_path(&self, index: usize) -> Vec<(BigInt, bool)> {
+        assert!(index < self.leaves.len(), "Leaf index out of bounds");
+
         let mut path = Vec::new();
-        let mut current_index = index;
-        let mut nodes = self.leaves.clone();
+        let mut idx = index;
 
-        while nodes.len() > 1 {
-            let next_level: Vec<BigInt> = nodes
-                .chunks(2)
-                .map(|chunk| {
-                    if chunk.len() == 2 {
-                        self.hash_function.hash(&chunk[0], &chunk[1])
-                    } else {
-                        chunk[0].clone()
-                    }
-                })
-                .collect();
+        let mut level = self.leaves.clone();
 
-            let sibling_index = if current_index % 2 == 0 {
-                current_index + 1
-            } else {
-                current_index - 1
-            };
-
-            if sibling_index < nodes.len() {
-                path.push((nodes[sibling_index].clone(), current_index % 2 == 0));
+        while level.len() > 1 {
+            // pad odd count
+            if level.len() % 2 != 0 {
+                level.push(level.last().unwrap().clone());
             }
 
-            current_index /= 2;
-            nodes = next_level;
+            let mut next = Vec::with_capacity((level.len() + 1) / 2);
+
+            for pair in level.chunks(2) {
+                next.push(self.hash_function.hash(&pair[0], &pair[1]));
+            }
+
+            // sibling
+            let is_left = idx % 2 == 1;
+            let sibling_idx = if is_left { idx - 1 } else { idx + 1 };
+
+            path.push((level[sibling_idx].clone(), is_left));
+
+            idx /= 2;
+            level = next;
         }
 
         path
     }
 
-    fn compute_root(leaves: &Vec<BigInt>, hash_function: &H) -> BigInt {
-        let mut nodes = leaves.clone();
-        while nodes.len() > 1 {
-            nodes = nodes
+    fn compute_root(leaves: &[BigInt], hash_function: &H) -> BigInt {
+        let mut level = leaves.to_vec();
+
+        while level.len() > 1 {
+            // pad odd count
+            if level.len() % 2 != 0 {
+                level.push(level.last().unwrap().clone());
+            }
+
+            level = level
                 .chunks(2)
-                .map(|chunk| {
-                    if chunk.len() == 2 {
-                        hash_function.hash(&chunk[0], &chunk[1])
-                    } else {
-                        chunk[0].clone()
-                    }
-                })
+                .map(|pair| hash_function.hash(&pair[0], &pair[1]))
                 .collect();
         }
-        nodes[0].clone()
+
+        level[0].clone()
     }
 }
